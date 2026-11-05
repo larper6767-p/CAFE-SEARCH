@@ -1,0 +1,6 @@
+# Direct deps (approved 2026-11-05), plus their transitive deps, pinned exactly.
+psycopg[binary]==3.3.8
+psycopg-binary==3.3.8
+python-dotenv==1.2.4
+typing-extensions==4.16.0
+tzdata==2026.6
