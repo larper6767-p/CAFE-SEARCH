@@ -1,0 +1,26 @@
+# Secrets — never commit
+.env
+.env.local
+.env.*.local
+
+# Cached raw API responses (dev only, see AGENTS.md "External APIs and cost")
+data/raw/
+cache/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
