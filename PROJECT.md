@@ -153,7 +153,7 @@ Data sources → Ingestion jobs → Postgres + PostGIS → Backend API → Web a
 ## 15. Google data terms
 > Read 2026-11-06 from the Places API policies page and the Google Maps Platform Service Specific Terms (A.3, §14, last modified 2026-10-28).
 - `google_place_id` may be stored **indefinitely** (place IDs are exempt from caching restrictions).
-- Google-sourced lat/lng may be cached at most **30 consecutive calendar days**. Other Google fields (name, address, rating, review count, hours, phone, website, price level) have **no indefinite storage grant** — treat them as refreshable cache tied to `last_verified`; the step 6 plan adds a `google_data_fetched_at` column.
+- Google-sourced lat/lng may be cached at most **30 consecutive calendar days**. Other Google fields (name, address, rating, review count, hours, phone, website, price level) have **no indefinite storage grant** — treat them as refreshable cache tied to `last_verified`; the step 6 plan adds a `google_data_fetched_at` column. **First fetch date was 2026-11-06 → cached Google coords must be re-verified or dropped by 2026-12-06.**
 - Google Places data must **not be displayed on a non-Google map** (Service Specific Terms §14.2). The Phase 4 map decision is **OPEN**: option A (Google Maps), option B (Leaflet with own/OSM coordinates), option C (hybrid). **Do not build any map until decided.**
 - OSM data (Overpass fetches) is © OpenStreetMap contributors, licensed under ODbL — attribution required wherever OSM-derived fields are shown.
 - Dev raw responses are cached locally under `data/raw/` (gitignored) so re-runs don't re-bill; raw caching is a development-time convenience per AGENTS.md, and the refresh rule above is the long-term compliance plan.
