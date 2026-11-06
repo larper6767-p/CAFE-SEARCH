@@ -60,7 +60,7 @@ MASK_TEXT = MASK_BASE + ",nextPageToken"
 
 PAGE_SIZE = 20
 MAX_TEXT_PAGES = 3  # Google caps Text Search at 60 results total
-NEARBY_GRID_SPLITS = 2  # saturated cell -> 4 sub-cells (radius halved), depth 2 max
+NEARBY_GRID_SPLITS = int(os.getenv("PLACES_SPLITS", "2"))  # max split depth; override at run time
 NEW_IDS_MIN = int(os.getenv("PLACES_MIN_NEW_PER_CALL", "8"))  # growth-based split stop
 MIN_DELAY_S = 0.3  # politeness delay between live calls
 BACKOFF_S = [1.0, 2.0, 4.0, 8.0, 16.0]
