@@ -125,7 +125,7 @@ Data sources → Ingestion jobs → Postgres + PostGIS → Backend API → Web a
 | 7 | Users + community | Accounts, reviews, favorites |
 | 8 | Growth | More cities, second sources, monetization |
 
-**Current phase:** 0
+**Current phase:** 1 (steps 1–2 done: repo structure connection + migrations applied; step 3 next — NOT to be mixed into it)
 
 ## 13. Working agreements (for me and the agent)
 - One phase at a time; don't build ahead.
@@ -138,3 +138,7 @@ Data sources → Ingestion jobs → Postgres + PostGIS → Backend API → Web a
 | Date | Decision | Reason |
 |---|---|---|
 | | Start with Imphal only | Focused launch, data quality |
+| 2026-11-05 | Moved from Phase 0 to Phase 1 before Phase 0 checklist done | Owner instruction; coverage/center TODOs stay open, needed only by step 3 |
+| 2026-11-05 | Schema approved: `cafes.location` NOT NULL; `price_band` smallint 1–3; `curated_score` numeric(3,2) 1–5; RLS on all 6 tables (no policies until Phase 4); `city_id` ON DELETE RESTRICT | Owner-reviewed plan |
+| 2026-11-05 | Deps pinned: psycopg[binary] 3.3.8, python-dotenv 1.2.4 | Migration runner + later ingestion scripts |
+| 2026-11-06 | Steps 1–2 applied to Supabase (7 migrations, migrations tracked with checksums in `migrations` schema, own schema not public) | Idempotent runner, per-file transaction |
