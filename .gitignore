@@ -5,6 +5,8 @@
 
 # Cached raw API responses (dev only, see AGENTS.md "External APIs and cost")
 data/raw/
+# Derived/cleaned data (review CSVs) — treated as Google-sourced cache too
+data/processed/
 cache/
 
 # Node / Next.js
@@ -24,3 +26,5 @@ venv/
 Thumbs.db
 .vscode/
 .idea/
+
+AGENTS.md

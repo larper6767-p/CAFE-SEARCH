@@ -26,11 +26,11 @@ A mobile-first web app that helps people find the best cafes near them, starting
 - Stored in a `cities` table so other cities are just new rows.
 
 ## 4. Phase 0 checklist
-- [ ] Coverage check: search Google Maps and OSM for cafes in Imphal
-  - Cafes found: `TODO`
-  - With ratings: `TODO`
-  - With hours: `TODO`
-  - With price level: `TODO`
+- [ ] Coverage check: search Google Maps and OSM for cafes in Imphal (measured 2026-11-06)
+  - Cafes found: 402 unique on Google (385 within the 12 km radius), 9 on OSM
+  - With ratings: 331/402 (82%)
+  - With hours: 261/402 (64%)
+  - With price level: 142/402 (35%)
   - Only on Instagram / not on Google: `TODO`
 - [x] Center point + radius chosen
 - [ ] Ranking approach confirmed (section 7)
@@ -40,8 +40,8 @@ A mobile-first web app that helps people find the best cafes near them, starting
 | Filter | Notes |
 |---|---|
 | Distance from me | Browser geolocation, PostGIS radius query |
-| Open now | Needs structured hours; compare in Asia/Kolkata time |
-| Price | Own bands: ₹ under 150 per drink, ₹₹ 150-250, ₹₹₹ above 250 (Google's price level is often missing) |
+| Open now | Needs structured hours (format decided step 5: per-weekday interval arrays, `[]` = closed day, missing days = closed, NULL = unknown; 24/7 and after-midnight wraps handled); compare in Asia/Kolkata time |
+| Price | Own bands: ₹ (Rs) under 150 per drink, ₹₹ (RsRs) 150-250, ₹₹₹ (RsRsRs) above 250 (Google's price level is often missing) |
 | Rating | Based on `final_score` |
 | Tags | See below |
 
@@ -126,7 +126,7 @@ Data sources → Ingestion jobs → Postgres + PostGIS → Backend API → Web a
 | 7 | Users + community | Accounts, reviews, favorites |
 | 8 | Growth | More cities, second sources, monetization |
 
-**Current phase:** 1 — **step 4 COMPLETE** (OSM overpass cross-check + three Google live runs, 78 calls ≈ ₹0.00, **402 unique places** cached as local JSON with per-call manifests, zero DB writes; raw data ready for owner review under `data/raw/`). Next: step 5 planning only (cleaning + tests + upsert design — no code until plan approved; `opening_hours` format decided in step 5)
+**Current phase:** 1 — **step 5 in progress** (cleaning pipeline + gate + tests written and passing: 39 tests; review CSV generated — owner review REQUIRED before any DB write; no DB writes performed). Step 4 remains complete: 402 unique places under `data/raw/`, 78 Google calls ≈ ₹0.00
 
 ## 13. Working agreements (for me and the agent)
 - One phase at a time; don't build ahead.
@@ -139,6 +139,7 @@ Data sources → Ingestion jobs → Postgres + PostGIS → Backend API → Web a
 | Date | Decision | Reason |
 |---|---|---|
 | | Start with Imphal only | Focused launch, data quality |
+| 2026-11-06 | Step 5 run under approved plan + changes: bakery/cake_shop default EXCLUDE (`bakery_default_exclude`), review only if `types` has a cafe-family type or keyword name (cafe, café, coffee, tea, chai, espresso, brew, roast, roastery, bistro, patisserie, dessert, bakehouse, lounge); cafe-family 12–15 km review, >15 km exclude for everything; hours JSON per-weekday intervals approved (`[]`=closed, missing days closed, NULL=unknown, 24/7-no-close + sat→sun wrap handled); price_level→band 1/2/3, missing→NULL; dedupe same-name ≤50 m flags both rows; review CSV UTF-8-BOM, all-quoted, decision prefilled, sorted review_count desc; loader gate `csv_gate.py`: count+id integrity check, non-include rows refused (not ingested, invalid decision tokens are hard errors); whitespace/NFC normalization for names+addresses; `data/processed/` gitignored + on purge list; tests stdlib unittest | Owner-approved with changes |
 | 2026-11-05 | Moved from Phase 0 to Phase 1 before Phase 0 checklist done | Owner instruction; coverage/center TODOs stay open, needed only by step 3 |
 | 2026-11-05 | Schema approved: `cafes.location` NOT NULL; `price_band` smallint 1–3; `curated_score` numeric(3,2) 1–5; RLS on all 6 tables (no policies until Phase 4); `city_id` ON DELETE RESTRICT | Owner-reviewed plan |
 | 2026-11-05 | Deps pinned: psycopg[binary] 3.3.8, python-dotenv 1.2.4 | Migration runner + later ingestion scripts |
@@ -153,6 +154,7 @@ Data sources → Ingestion jobs → Postgres + PostGIS → Backend API → Web a
 ## 15. Google data terms
 > Read 2026-11-06 from the Places API policies page and the Google Maps Platform Service Specific Terms (A.3, §14, last modified 2026-10-28).
 - `google_place_id` may be stored **indefinitely** (place IDs are exempt from caching restrictions).
+- Cache **purge/re-verify list for the 2026-12-06 deadline**: `data/raw/` (raw fetch responses incl. coords) and `data/processed/` (derived review CSVs carrying Google-sourced values).
 - Google-sourced lat/lng may be cached at most **30 consecutive calendar days**. Other Google fields (name, address, rating, review count, hours, phone, website, price level) have **no indefinite storage grant** — treat them as refreshable cache tied to `last_verified`; the step 6 plan adds a `google_data_fetched_at` column. **First fetch date was 2026-11-06 → cached Google coords must be re-verified or dropped by 2026-12-06.**
 - Google Places data must **not be displayed on a non-Google map** (Service Specific Terms §14.2). The Phase 4 map decision is **OPEN**: option A (Google Maps), option B (Leaflet with own/OSM coordinates), option C (hybrid). **Do not build any map until decided.**
 - OSM data (Overpass fetches) is © OpenStreetMap contributors, licensed under ODbL — attribution required wherever OSM-derived fields are shown.
