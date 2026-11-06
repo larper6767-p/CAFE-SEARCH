@@ -126,7 +126,7 @@ Data sources → Ingestion jobs → Postgres + PostGIS → Backend API → Web a
 | 7 | Users + community | Accounts, reviews, favorites |
 | 8 | Growth | More cities, second sources, monetization |
 
-**Current phase:** 1 (steps 1–2 done: repo structure connection + migrations applied; step 3 next — NOT to be mixed into it)
+**Current phase:** 1 (steps 1–3 done; step 4 in progress: fetchers written + OSM cross-check fetched to local JSON; Google `--live` awaiting owner go)
 
 ## 13. Working agreements (for me and the agent)
 - One phase at a time; don't build ahead.
