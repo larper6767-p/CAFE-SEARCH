@@ -126,7 +126,7 @@ Data sources → Ingestion jobs → Postgres + PostGIS → Backend API → Web a
 | 7 | Users + community | Accounts, reviews, favorites |
 | 8 | Growth | More cities, second sources, monetization |
 
-**Current phase:** 1 (steps 1–3 done; step 4: first Google live run done — 40 calls hit the cap, 252 unique places saved to local JSON, zero DB writes; coverage continuation + step 5 pending owner decisions)
+**Current phase:** 1 (steps 1–3 done; step 4: two Google live runs done — 66 calls total ≈ ₹0.00, **398 unique places** in local JSON, zero DB writes; text search fully exhausted, nearby tail flattened; awaiting owner coverage-stop confirmation + raw-data review, then step 5)
 
 ## 13. Working agreements (for me and the agent)
 - One phase at a time; don't build ahead.
@@ -147,6 +147,7 @@ Data sources → Ingestion jobs → Postgres + PostGIS → Backend API → Web a
 | 2026-11-06 | Imphal radius corrected to 12000 m (12 km) via `20261106120000_update_imphal_radius.sql` | 100 km exceeded the Imphal area and inflated Google fetch cost; aligned with the 10–12 km draft |
 | 2026-11-06 | Step 4 approved: 3×3 grid + one split per saturated cell; text queries cafe/coffee shop/bakery/tea house/cafe restaurant; OSM Overpass check now (local JSON only); stdlib-only HTTP (no new deps); dry-run default, `--live` gated on `GOOGLE_BILLING_CONFIRMED` + `PLACES_MAX_CALLS` cap | Owner decisions; see section 15 for Google data terms |
 | 2026-11-06 | First Google live run executed (owner "go" after confirming GCP billing cap, 50/day quota, Places API (New)-only key): 40/40 calls, **252 unique places** saved to local JSON (719 entries incl. cross-cell dupes), 230 OPERATIONAL / 22 CLOSED_TEMPORARILY; fields on unique: rating 83%, hours 65%, phone 57%, priceLevel 38%, website 17%. Coverage incomplete — 28/40 responses saturated, depth-1 split insufficient, 5 text nextPageTokens un-followed; cap aborted before call 41 as designed | Real demand for continuation estimated at ~60–100 more calls (≈₹0.00 within 7,000 free events/mo); awaiting owner decision (continue deeper splits / accept 252 / hybrid) |
+| 2026-11-06 | Coverage continuation approved and run: fetcher upgraded to depth-2 splits with **growth-based stop** (`PLACES_MIN_NEW_PER_CALL=8`), cap 120 (default stays 40), text pages 2–3 followed. Run 2: 52 queue calls = 26 live + 26 free cache replays. **Union of both runs: 398 unique places** (1,085 entries; 369 OPERATIONAL / 29 CLOSED_TEMPORARILY; first-seen nearby 270 vs text 128; field coverage: rating 82%, hours 65%, phone 53%, priceLevel 35%, website 15%). Total Google calls across both runs: **66 ≈ ₹0.00** | Text search exhausted at Google's 60-results/query × 5 queries; 4 dense 2-km core cells still saturate under POPULARITY (c09s3s3 +0) so deeper chasing is low-yield; Phase-1 target (100+) exceeded ~4×; owner to confirm coverage stop and review raw JSON |
 
 ## 15. Google data terms
 > Read 2026-11-06 from the Places API policies page and the Google Maps Platform Service Specific Terms (A.3, §14, last modified 2026-10-28).
