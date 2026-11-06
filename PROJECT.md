@@ -20,8 +20,9 @@ A mobile-first web app that helps people find the best cafes near them, starting
 
 ## 3. Target area (v1)
 - **City:** Imphal (Imphal West + Imphal East)
-- **Center point:** `TODO: lat, lng` (pick one, e.g. near Paona Bazar)
-- **Radius:** `TODO: 10-12 km`
+- **Center point:** `24.807779351178766, 93.93915469958242` (owner-provided 2026-11-06)
+- **Radius:** `100 km` (`radius_m = 100000`; owner-confirmed 2026-11-06, replacing a briefly-written 80 km. 100 km reaches far beyond Imphal West/East — scope will be re-checked against the step-4 Google fetch cost estimate.)
+- To change the radius later: **never edit an applied migration** (the runner fails on checksum mismatch). Add a new file, e.g. `supabase/migrations/<date>_update_imphal_radius.sql` containing `update public.cities set radius_m = <new> where name = 'Imphal';` and run `scripts/apply_migrations.py`.
 - Stored in a `cities` table so other cities are just new rows.
 
 ## 4. Phase 0 checklist
@@ -31,7 +32,7 @@ A mobile-first web app that helps people find the best cafes near them, starting
   - With hours: `TODO`
   - With price level: `TODO`
   - Only on Instagram / not on Google: `TODO`
-- [ ] Center point + radius chosen
+- [x] Center point + radius chosen
 - [ ] Ranking approach confirmed (section 7)
 - [ ] Tags and filters confirmed (sections 5 and 6)
 
@@ -142,3 +143,4 @@ Data sources → Ingestion jobs → Postgres + PostGIS → Backend API → Web a
 | 2026-11-05 | Schema approved: `cafes.location` NOT NULL; `price_band` smallint 1–3; `curated_score` numeric(3,2) 1–5; RLS on all 6 tables (no policies until Phase 4); `city_id` ON DELETE RESTRICT | Owner-reviewed plan |
 | 2026-11-05 | Deps pinned: psycopg[binary] 3.3.8, python-dotenv 1.2.4 | Migration runner + later ingestion scripts |
 | 2026-11-06 | Steps 1–2 applied to Supabase (7 migrations, migrations tracked with checksums in `migrations` schema, own schema not public) | Idempotent runner, per-file transaction |
+| 2026-11-06 | Imphal center 24.807779351178766, 93.93915469958242; radius 100000 m (≈100 km — confirmed over a briefly-written 80 km; revisit before bulk Google fetch) + 10 v1 tags seeded via `20261106110000_seed_imphal_city_and_tags.sql` (upsert, owner decision) | Owner values; seeds idempotent by design |
