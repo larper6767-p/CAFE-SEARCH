@@ -84,7 +84,7 @@ Then blend in (weights `TODO`):
 
 ## 9. Draft data model (confirm after Phase 0)
 - **cities**: `id`, `name`, `center` (point), `radius_m`, `timezone`
-- **cafes**: `id`, `city_id`, `name`, `address`, `location` (PostGIS point), `phone`, `website`, `price_band`, `opening_hours` (JSON), `status`, `google_place_id`, `osm_id`, `google_rating`, `google_review_count`, `curated_score`, `final_score`, `last_verified`
+- **cafes**: `id`, `city_id`, `name`, `address`, `location` (PostGIS point), `phone`, `website`, `price_band`, `price_band_source` ('google' | 'manual' — loader never overwrites manual bands), `opening_hours` (JSON), `status`, `google_place_id`, `osm_id`, `google_rating`, `google_review_count`, `curated_score`, `final_score`, `google_data_fetched_at` (batch fetch timestamp; 30-day staleness predicate uses THIS, not `last_verified`), `last_verified` (manual-verification semantics; the loader never writes it — insert default only)
 - **tags**: `id`, `name`
 - **cafe_tags**: `cafe_id`, `tag_id`
 - **user_reviews** (later): `cafe_id`, `user_id`, `rating`, `text`, `created_at`
@@ -126,7 +126,7 @@ Data sources → Ingestion jobs → Postgres + PostGIS → Backend API → Web a
 | 7 | Users + community | Accounts, reviews, favorites |
 | 8 | Growth | More cities, second sources, monetization |
 
-**Current phase:** 1 — **step 5 in progress** (cleaning pipeline + gate + tests written and passing: 39 tests; review CSV generated — owner review REQUIRED before any DB write; no DB writes performed). Step 4 remains complete: 402 unique places under `data/raw/`, 78 Google calls ≈ ₹0.00
+**Current phase:** 1 — **step 6 code written; dry-run complete; awaiting owner "commit" for the real load.** Migration `20261107000000` applied (11 tracked); loader `scripts/load_places.py` + `scripts/purge_expired_cache.py` + 70-test suite all passing; dry-run validated 181 include rows → inserted 181 / updated 0 (match: True), rolled back, `cafes` still 0 rows. Step 5 review CSV is owner-marked (include 181 / review 70 / exclude 151) and decisions are durably tracked in `data/decisions/imphal_decisions.csv`. DB-side purge design is a proposal awaiting owner approval. Step 4 remains complete: 402 unique places under `data/raw/`, 78 Google calls ≈ ₹0.00
 
 ## 13. Working agreements (for me and the agent)
 - One phase at a time; don't build ahead.
@@ -139,6 +139,7 @@ Data sources → Ingestion jobs → Postgres + PostGIS → Backend API → Web a
 | Date | Decision | Reason |
 |---|---|---|
 | | Start with Imphal only | Focused launch, data quality |
+| 2026-11-07 | **Step 6 approved with owner changes**; executed: migration `20261107000000_add_google_data_fetched_at_and_price_band_source.sql` applied via the checksum runner (11 tracked). Loader `scripts/load_places.py` written: dry-run DEFAULT + `--commit` gated on owner approval; single transaction; upsert on `google_place_id` (arbiter `cafes_google_place_id_key`); writes name/address/location(lng first)/phone/website/opening_hours/status/rating/review_count + `price_band` filled ONLY when existing NULL or `price_band_source='google'` (never overwrites manual; incoming NULL replaces a google-sourced band) + `price_band_source`; `google_data_fetched_at` = batch manifest timestamp (2026-11-06T16:15:00.800Z), never `now()`; loader NEVER writes `last_verified` (insert default only) and never touches curated_score/tags/final_score/source/city_id/id. phone/website sourced from the raw cache by place id (the marked review CSV has no such columns; owner's CSV untouched). `RETURNING (xmax = 0)` insert/update discrimination verified against a pre-snapshot (fallback check in place). Decisions survive purges in `data/decisions/imphal_decisions.csv` (tracked in git; columns id/decision/notes only, 402 rows: include 181 / review 70 / exclude 151). Local purge script `scripts/purge_expired_cache.py` written: dry-run default, deletes only under `data/raw/` + `data/processed/`, lists candidates, refuses `--commit` when no fresh batch exists unless `--confirm-without-replacement`. Tests extended for loader + purge (suite 70, all pass). DB-side purge design (make `location` nullable w/ CHECK + `purge_stale_google_data.py`) is a PROPOSAL awaiting owner approval — NOT implemented. Dry-run executed: gate integrity OK, 181 include rows validated (0 errors), **inserted 181 / updated 0 (match: True)**, transaction ROLLED BACK — `cafes` still 0 rows (verified separately). NO `--commit` run. | Owner-approved plan + changes; dry-run shown to owner; real load awaits explicit "commit" |
 | 2026-11-06 | Step 5 run under approved plan + changes: bakery/cake_shop default EXCLUDE (`bakery_default_exclude`), review only if `types` has a cafe-family type or keyword name (cafe, café, coffee, tea, chai, espresso, brew, roast, roastery, bistro, patisserie, dessert, bakehouse, lounge); cafe-family 12–15 km review, >15 km exclude for everything; hours JSON per-weekday intervals approved (`[]`=closed, missing days closed, NULL=unknown, 24/7-no-close + sat→sun wrap handled); price_level→band 1/2/3, missing→NULL; dedupe same-name ≤50 m flags both rows; review CSV UTF-8-BOM, all-quoted, decision prefilled, sorted review_count desc; loader gate `csv_gate.py`: count+id integrity check, non-include rows refused (not ingested, invalid decision tokens are hard errors); whitespace/NFC normalization for names+addresses; `data/processed/` gitignored + on purge list; tests stdlib unittest | Owner-approved with changes |
 | 2026-11-05 | Moved from Phase 0 to Phase 1 before Phase 0 checklist done | Owner instruction; coverage/center TODOs stay open, needed only by step 3 |
 | 2026-11-05 | Schema approved: `cafes.location` NOT NULL; `price_band` smallint 1–3; `curated_score` numeric(3,2) 1–5; RLS on all 6 tables (no policies until Phase 4); `city_id` ON DELETE RESTRICT | Owner-reviewed plan |
@@ -151,11 +152,60 @@ Data sources → Ingestion jobs → Postgres + PostGIS → Backend API → Web a
 | 2026-11-06 | Coverage continuation approved and run: fetcher upgraded to depth-2 splits with **growth-based stop** (`PLACES_MIN_NEW_PER_CALL=8`), cap 120 (default stays 40), text pages 2–3 followed. Run 2: 52 queue calls = 26 live + 26 free cache replays. **Union of both runs: 398 unique places** (1,085 entries; 369 OPERATIONAL / 29 CLOSED_TEMPORARILY; first-seen nearby 270 vs text 128; field coverage: rating 82%, hours 65%, phone 53%, priceLevel 35%, website 15%). Total Google calls across both runs: **66 ≈ ₹0.00** | Text search exhausted at Google's 60-results/query × 5 queries; 4 dense 2-km core cells still saturate under POPULARITY (c09s3s3 +0) so deeper chasing is low-yield; Phase-1 target (100+) exceeded ~4×; owner to confirm coverage stop and review raw JSON |
 | 2026-11-06 | Final depth-3 pass run (`PLACES_SPLITS=3`, cap 90): 64/90 budget = 12 live + 52 cache replays. Outcome: **+4 places only** (branches c02s1s1s* +1, c02s1s3s* +3, c03s1s1s* +0; c09s3s3 refused by growth-stop). POPULARITY ranking returns the same ~20 places even at 1 km radius — tail confirmed exhausted. **Step 4 COMPLETE. Final union: 402 unique places** (1,171 entries; 372 OPERATIONAL / 30 CLOSED_TEMPORARILY), 78 Google calls total ≈ ₹0.00, all raw JSON + manifests on disk, zero DB writes | Depth-3 yield decision data proves stopping is right; Phase-1 target exceeded 4×; next = step 5 planning only (cleaning + tests + upsert design, no code until plan approved) |
 
+## 15.5. Post-load verification queries (fixed 2026-11-07)
+
+All scoped to Imphal's city row; the inside-radius count uses `ST_DWithin`
+against the city center (geography, meters) — NOT baked-in constants; axis
+order checked via ST_X/ST_Y (point stores lng first).
+
+```sql
+-- 1. totals by source/status (Imphal only)
+select source, status, count(*)
+from public.cafes
+where city_id = (select id from public.cities where name = 'Imphal')
+group by 1, 2 order by 3 desc;
+
+-- 2. duplicate guard on the upsert key
+select google_place_id, count(*)
+from public.cafes
+where source = 'google'
+  and city_id = (select id from public.cities where name = 'Imphal')
+group by 1 having count(*) > 1;
+
+-- 3. freshness: 30-day compliance
+select count(*) filter (where google_data_fetched_at is null)      as missing_ts,
+       count(*) filter (where google_data_fetched_at < now() - interval '30 days') as stale,
+       min(google_data_fetched_at) as oldest, max(google_data_fetched_at) as newest
+from public.cafes
+where source = 'google'
+  and city_id = (select id from public.cities where name = 'Imphal');
+
+-- 4. coords within 15 km via ST_DWithin + lng/lat sanity
+select count(*) as inside_radius,
+       count(*) filter (where extensions.st_y(location::extensions.geometry) between 23 and 25
+                          and extensions.st_x(location::extensions.geometry) between 93 and 95) as axis_order_ok
+from public.cafes c
+join public.cities ci on ci.name = 'Imphal' and c.city_id = ci.id
+where c.source = 'google'
+  and st_dwithin(c.location, ci.center, 15000);
+
+-- 5. fields sanity (hours/price/rating)
+select count(*) filter (where opening_hours is not null)              as with_hours,
+       count(*) filter (where price_band is not null)                 as with_price_band,
+       count(*) filter (where price_band_source = 'manual')           as manual_bands,
+       count(*) filter (where google_rating is not null)              as with_rating,
+       count(*) filter (where google_review_count is not null)        as with_reviews
+from public.cafes
+where source = 'google'
+  and city_id = (select id from public.cities where name = 'Imphal');
+```
+
 ## 15. Google data terms
 > Read 2026-11-06 from the Places API policies page and the Google Maps Platform Service Specific Terms (A.3, §14, last modified 2026-10-28).
 - `google_place_id` may be stored **indefinitely** (place IDs are exempt from caching restrictions).
 - Cache **purge/re-verify list for the 2026-12-06 deadline**: `data/raw/` (raw fetch responses incl. coords) and `data/processed/` (derived review CSVs carrying Google-sourced values).
-- Google-sourced lat/lng may be cached at most **30 consecutive calendar days**. Other Google fields (name, address, rating, review count, hours, phone, website, price level) have **no indefinite storage grant** — treat them as refreshable cache tied to `last_verified`; the step 6 plan adds a `google_data_fetched_at` column. **First fetch date was 2026-11-06 → cached Google coords must be re-verified or dropped by 2026-12-06.**
+- Google-sourced lat/lng may be cached at most **30 consecutive calendar days**. Other Google fields (name, address, rating, review count, hours, phone, website, price level) have **no indefinite storage grant** — treat them as refreshable cache tied to `google_data_fetched_at` (column added 2026-11-07; loader stamps it with the BATCH fetch timestamp, never `now()`, and never touches `last_verified`). **First fetch date was 2026-11-06 → cached Google coords must be re-verified or dropped by 2026-12-06.**
+- **Purge mechanics (2026-11-07)**: local purge = `scripts/purge_expired_cache.py` (dry-run default; deletes only under `data/raw/` + `data/processed/`; lists candidates; refuses `--commit` with no fresh batch unless `--confirm-without-replacement`). DB-side purge design (proposal, awaiting owner approval): migration to make `cafes.location` nullable with a CHECK (`location is not null unless google_data_fetched_at is null or the row is not Google-sourced`) + `scripts/purge_stale_google_data.py` nulling Google-derived fields older than 30 days, keeping `google_place_id` and all curated data. Owner decisions are preserved outside the purge zone in `data/decisions/imphal_decisions.csv` (tracked in git, id/decision/notes only).
 - Google Places data must **not be displayed on a non-Google map** (Service Specific Terms §14.2). The Phase 4 map decision is **OPEN**: option A (Google Maps), option B (Leaflet with own/OSM coordinates), option C (hybrid). **Do not build any map until decided.**
 - OSM data (Overpass fetches) is © OpenStreetMap contributors, licensed under ODbL — attribution required wherever OSM-derived fields are shown.
 - Dev raw responses are cached locally under `data/raw/` (gitignored) so re-runs don't re-bill; raw caching is a development-time convenience per AGENTS.md, and the refresh rule above is the long-term compliance plan.
