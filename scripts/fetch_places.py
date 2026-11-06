@@ -14,9 +14,12 @@
 Approach (approved plan):
 - Nearby Search (New): 3x3 overlapping-circle grid over the city radius; cell
   radius = 2/3 of city radius, spacing = 1/2 of city radius (geometry, not
-  city-specific). Max 20 results per call, no pagination. A cell that RETURNS
-  EXACTLY 20 results is split once into 4 sub-cells (radius halved) so denser
-  areas still get covered.
+  city-specific). Max 20 results per call, no pagination. A saturated cell
+  (exactly 20 results) splits into 4 sub-cells (radius halved), up to
+  NEARBY_GRID_SPLITS levels deep (e.g. 2 -> r 8km, 4km, 2km). Growth-based
+  stop: split only when the result still contributes at least
+  PLACES_MIN_NEW_PER_CALL (default 8) NEW place ids, so the queue terminates
+  on the dense-overlap tail instead of running unbounded.
 - Text Search (New): categorical queries ("cafe in <city>", coffee shop,
   bakery, tea house, cafe restaurant) with a circle locationBias; paginates up
   to 3 pages (max 60 results/query per the docs) via nextPageToken.
@@ -57,7 +60,8 @@ MASK_TEXT = MASK_BASE + ",nextPageToken"
 
 PAGE_SIZE = 20
 MAX_TEXT_PAGES = 3  # Google caps Text Search at 60 results total
-NEARBY_GRID_SPLITS = 1  # a saturated cell is split once into 4 sub-cells
+NEARBY_GRID_SPLITS = 2  # saturated cell -> 4 sub-cells (radius halved), depth 2 max
+NEW_IDS_MIN = int(os.getenv("PLACES_MIN_NEW_PER_CALL", "8"))  # growth-based split stop
 MIN_DELAY_S = 0.3  # politeness delay between live calls
 BACKOFF_S = [1.0, 2.0, 4.0, 8.0, 16.0]
 
@@ -249,11 +253,10 @@ def run_live(city: dict, cells: list[dict], args, api_key: str) -> None:
     print(f"Run dir: {run_dir}\nLive-call cap: PLACES_MAX_CALLS={cap}")
 
     queue = call_plan(city, cells)
+    seen_ids: set[str] = set()
     seq = 0
     while queue:
         call = queue.pop(0)
-        if call["kind"] != "nearby" or call["cell"] is None:
-            pass
         budget.tick(describe(call))  # aborts via SystemExit if over cap
         seq += 1
         data = execute_call(call, args, api_key, run_dir, seq)
@@ -264,10 +267,20 @@ def run_live(city: dict, cells: list[dict], args, api_key: str) -> None:
             continue
 
         places = payload.get("places", []) or []
+        new_ids = 0
+        for p in places:
+            pid = p.get("id")
+            if pid and pid not in seen_ids:
+                seen_ids.add(pid)
+                new_ids += 1
+        print(f"[discovery] {call['label']}: {len(places)} results, {new_ids} new "
+              f"(total unique {len(seen_ids)})")
+
         if call["kind"] == "nearby" and len(places) >= PAGE_SIZE:
             cell = call["cell"]
-            if cell["split"] < NEARBY_GRID_SPLITS and budget.room() >= 4:
-                print(f"saturation: {call['label']} returned {len(places)} results — splitting")
+            if cell["split"] < NEARBY_GRID_SPLITS and budget.room() >= 4 and new_ids >= NEW_IDS_MIN:
+                print(f"saturation: {call['label']} returned {len(places)} results "
+                      f"({new_ids} new) — splitting to depth {cell['split'] + 1}")
                 sub_r = max(500.0, cell["radius_m"] / 2)
                 quarter_d, _ = deg_offsets(cell["radius_m"] / 4, cell["radius_m"] / 4, city["lat"])
                 for i, (dl, dg) in enumerate([
@@ -283,8 +296,12 @@ def run_live(city: dict, cells: list[dict], args, api_key: str) -> None:
                         "endpoint": ENDPOINT_NEARBY, "mask": MASK_NEARBY,
                         "body": nearby_body(sub), "cell": sub, "page": 0,
                     })
-            elif cell["split"] >= NEARBY_GRID_SPLITS:
-                print(f"WARNING: {call['label']} still saturated after split — deeper covers needed later")
+            elif cell["split"] < NEARBY_GRID_SPLITS:
+                print(f"NOTE: {call['label']} saturated but branch stopped "
+                      f"(new={new_ids} < {NEW_IDS_MIN} or call-room={budget.room()})")
+            else:
+                print(f"WARNING: {call['label']} still saturated at max split depth "
+                      "— tail relies on sibling branches and text pages")
 
         if call["kind"] == "text" and payload.get("nextPageToken"):
             if call["page"] + 1 < MAX_TEXT_PAGES:
@@ -321,9 +338,10 @@ def main() -> int:
         print(f"  - {describe(call)}")
 
     print(
-        f"\nRuntime rules: saturated nearby cells split once into 4 sub-cells; "
-        f"text results paginate up to {MAX_TEXT_PAGES} pages; hard cap PLACES_MAX_CALLS "
-        f"(default 40); cache first — re-runs don't re-bill (use --refetch to force)"
+        f"\nRuntime rules: saturated nearby cells split into 4 sub-cells, max depth "
+        f"{NEARBY_GRID_SPLITS}, and only while a branch adds >= {NEW_IDS_MIN} new places "
+        f"(growth stop); text results paginate up to {MAX_TEXT_PAGES} pages; hard cap "
+        f"PLACES_MAX_CALLS (default 40); cache first — re-runs don't re-bill (use --refetch to force)"
     )
     sku = "Nearby/Text Search ENTERPRISE (India): rating/userRatingCount/regularOpeningHours/websiteUri/priceLevel/internationalPhoneNumber are Enterprise fields; no Atmosphere fields requested"
     print(f"Field mask: {MASK_TEXT}\nBilling: {sku}")
