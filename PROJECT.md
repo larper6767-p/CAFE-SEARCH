@@ -21,7 +21,7 @@ A mobile-first web app that helps people find the best cafes near them, starting
 ## 3. Target area (v1)
 - **City:** Imphal (Imphal West + Imphal East)
 - **Center point:** `24.807779351178766, 93.93915469958242` (owner-provided 2026-11-06)
-- **Radius:** `100 km` (`radius_m = 100000`; owner-confirmed 2026-11-06, replacing a briefly-written 80 km. 100 km reaches far beyond Imphal West/East — scope will be re-checked against the step-4 Google fetch cost estimate.)
+- **Radius:** `12 km` (`radius_m = 12000`; corrected 2026-11-06 from an interim 100 km via `20261106120000_update_imphal_radius.sql` — back to the 10–12 km draft, scoped to Imphal West/East.)
 - To change the radius later: **never edit an applied migration** (the runner fails on checksum mismatch). Add a new file, e.g. `supabase/migrations/<date>_update_imphal_radius.sql` containing `update public.cities set radius_m = <new> where name = 'Imphal';` and run `scripts/apply_migrations.py`.
 - Stored in a `cities` table so other cities are just new rows.
 
@@ -144,3 +144,4 @@ Data sources → Ingestion jobs → Postgres + PostGIS → Backend API → Web a
 | 2026-11-05 | Deps pinned: psycopg[binary] 3.3.8, python-dotenv 1.2.4 | Migration runner + later ingestion scripts |
 | 2026-11-06 | Steps 1–2 applied to Supabase (7 migrations, migrations tracked with checksums in `migrations` schema, own schema not public) | Idempotent runner, per-file transaction |
 | 2026-11-06 | Imphal center 24.807779351178766, 93.93915469958242; radius 100000 m (≈100 km — confirmed over a briefly-written 80 km; revisit before bulk Google fetch) + 10 v1 tags seeded via `20261106110000_seed_imphal_city_and_tags.sql` (upsert, owner decision) | Owner values; seeds idempotent by design |
+| 2026-11-06 | Imphal radius corrected to 12000 m (12 km) via `20261106120000_update_imphal_radius.sql` | 100 km exceeded the Imphal area and inflated Google fetch cost; aligned with the 10–12 km draft |
