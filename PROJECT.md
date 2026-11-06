@@ -145,3 +145,12 @@ Data sources → Ingestion jobs → Postgres + PostGIS → Backend API → Web a
 | 2026-11-06 | Steps 1–2 applied to Supabase (7 migrations, migrations tracked with checksums in `migrations` schema, own schema not public) | Idempotent runner, per-file transaction |
 | 2026-11-06 | Imphal center 24.807779351178766, 93.93915469958242; radius 100000 m (≈100 km — confirmed over a briefly-written 80 km; revisit before bulk Google fetch) + 10 v1 tags seeded via `20261106110000_seed_imphal_city_and_tags.sql` (upsert, owner decision) | Owner values; seeds idempotent by design |
 | 2026-11-06 | Imphal radius corrected to 12000 m (12 km) via `20261106120000_update_imphal_radius.sql` | 100 km exceeded the Imphal area and inflated Google fetch cost; aligned with the 10–12 km draft |
+| 2026-11-06 | Step 4 approved: 3×3 grid + one split per saturated cell; text queries cafe/coffee shop/bakery/tea house/cafe restaurant; OSM Overpass check now (local JSON only); stdlib-only HTTP (no new deps); dry-run default, `--live` gated on `GOOGLE_BILLING_CONFIRMED` + `PLACES_MAX_CALLS` cap | Owner decisions; see section 15 for Google data terms |
+
+## 15. Google data terms
+> Read 2026-11-06 from the Places API policies page and the Google Maps Platform Service Specific Terms (A.3, §14, last modified 2026-10-28).
+- `google_place_id` may be stored **indefinitely** (place IDs are exempt from caching restrictions).
+- Google-sourced lat/lng may be cached at most **30 consecutive calendar days**. Other Google fields (name, address, rating, review count, hours, phone, website, price level) have **no indefinite storage grant** — treat them as refreshable cache tied to `last_verified`; the step 6 plan adds a `google_data_fetched_at` column.
+- Google Places data must **not be displayed on a non-Google map** (Service Specific Terms §14.2). The Phase 4 map decision is **OPEN**: option A (Google Maps), option B (Leaflet with own/OSM coordinates), option C (hybrid). **Do not build any map until decided.**
+- OSM data (Overpass fetches) is © OpenStreetMap contributors, licensed under ODbL — attribution required wherever OSM-derived fields are shown.
+- Dev raw responses are cached locally under `data/raw/` (gitignored) so re-runs don't re-bill; raw caching is a development-time convenience per AGENTS.md, and the refresh rule above is the long-term compliance plan.
