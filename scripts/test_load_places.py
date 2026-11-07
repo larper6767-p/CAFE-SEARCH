@@ -278,8 +278,9 @@ class TestLoaderDb(unittest.TestCase):
         # lng FIRST in st_makepoint: st_x == lng, st_y == lat
         self.assertAlmostEqual(float(c["lng"]), CENTER_LNG + 0.01, places=5)
         self.assertAlmostEqual(float(c["lat"]), CENTER_LAT + 0.01, places=5)
-        # last_verified was NOT set from the batch (insert default = now())
-        self.assertGreater(c["last_verified"], BATCH_TS)
+        # last_verified stays NULL: the loader never writes it and the
+        # 20261108000000 migration dropped the now() insert default
+        self.assertIsNone(c["last_verified"])
         cur.close()
 
     def test_03_second_run_is_all_updates(self):
