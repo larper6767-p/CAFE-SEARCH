@@ -24,8 +24,9 @@ Owner-approved step-7 decisions:
     re-import of an existing manual row → SKIPPED ('already imported')
     near-match vs a GOOGLE row (same name, <= 50 m) → inserted anyway, reported
     ('[near match] ... never merged')
-- instagram_url / notes need the staged migration 20261109100000; rows filling
-  those cells while the columns are missing are refused.
+- instagram_url / notes were added by migration 20261109100000 (applied
+  2026-11-09); the importer still refuses rows filling those cells while the
+  columns are missing (defensive check for out-of-date databases).
 - Dry-run lists every row verdict; --commit performs ONE transaction.
 """
 from __future__ import annotations

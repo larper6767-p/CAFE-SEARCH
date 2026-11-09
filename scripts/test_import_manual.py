@@ -214,8 +214,9 @@ class TestImporterDb(unittest.TestCase):
     def test_insert_and_rerun_skip(self):
         params, errors, dist = validated()
         self.assertEqual(errors, [])
+        live_cols = im._columns_present(self.cur, ("notes", "instagram_url"))
         cafe_id = im.insert_manual_row(self.cur, params, self.city_id,
-                                       has_notes_cols=False)
+                                       has_notes_cols=live_cols)
         self.cur.execute(
             """
             select source, price_band_source, status, google_place_id,
@@ -264,11 +265,45 @@ class TestImporterDb(unittest.TestCase):
     def test_last_verified_written(self):
         params, errors, _ = validated()
         self.assertEqual(params["last_verified"], date(2026, 11, 9))
-        cafe_id = im.insert_manual_row(self.cur, params, self.city_id,
-                                       has_notes_cols=False)
+        cafe_id = im.insert_manual_row(
+            self.cur, params, self.city_id,
+            has_notes_cols=im._columns_present(self.cur, ("notes", "instagram_url")))
         self.cur.execute("select last_verified from public.cafes where id = %s",
                          (cafe_id,))
         self.assertEqual(self.cur.fetchone()[0].date(), date(2026, 11, 9))
+
+    def test_columns_present_after_migration(self):
+        """Migration 20261109100000 (applied 2026-11-09) added both columns."""
+        self.assertTrue(im._columns_present(self.cur, ("notes", "instagram_url")))
+
+    def test_notes_and_instagram_stored(self):
+        live_cols = im._columns_present(self.cur, ("notes", "instagram_url"))
+        row = base_row(instagram_url="https://instagram.com/fresh_brew",
+                       notes="Quiet corner, good filter coffee.")
+        params, errors, _ = im.validate_manual_row(
+            row, CENTER_LAT, CENTER_LNG, KNOWN_TAGS, has_notes_cols=live_cols)
+        self.assertEqual(errors, [])
+        self.assertEqual(params["instagram_url"], "https://instagram.com/fresh_brew")
+        self.assertEqual(params["notes"], "Quiet corner, good filter coffee.")
+        cafe_id = im.insert_manual_row(self.cur, params, self.city_id,
+                                       has_notes_cols=live_cols)
+        self.cur.execute("select instagram_url, notes from public.cafes where id = %s",
+                         (cafe_id,))
+        insta_db, notes_db = self.cur.fetchone()
+        self.assertEqual(insta_db, "https://instagram.com/fresh_brew")
+        self.assertEqual(notes_db, "Quiet corner, good filter coffee.")
+
+    def test_last_verified_null_when_absent(self):
+        """Empty last_verified cell → stored NULL (only stored when provided)."""
+        params, errors, _ = validated(last_verified="")
+        self.assertEqual(errors, [])
+        self.assertIsNone(params["last_verified"])
+        cafe_id = im.insert_manual_row(
+            self.cur, params, self.city_id,
+            has_notes_cols=im._columns_present(self.cur, ("notes", "instagram_url")))
+        self.cur.execute("select last_verified from public.cafes where id = %s",
+                         (cafe_id,))
+        self.assertIsNone(self.cur.fetchone()[0])
 
 
 if __name__ == "__main__":
