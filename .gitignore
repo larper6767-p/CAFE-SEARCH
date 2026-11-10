@@ -28,3 +28,6 @@ Thumbs.db
 .idea/
 
 AGENTS.md
+
+# owner's private rules file (rename+ignore ruling 2026-11-10) - never tracked
+RULES.md
