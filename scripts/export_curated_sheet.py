@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import csv
 import sys
+from datetime import timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -31,6 +32,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from db import connect, masked_host  # noqa: E402
 
 HEADER = ["id", "name", "curated_score", "last_verified"]
+
+
+def render_date(ts) -> str:
+    """Calendar-date render of a stored timestamptz value, taken in UTC —
+    identical to import_curated.render_date (each script stays standalone);
+    a date entered as YYYY-MM-DD renders back as the same calendar date
+    whatever the client session TIME ZONE is."""
+    if hasattr(ts, "date"):  # timestamptz arrives as an aware datetime
+        return ts.astimezone(timezone.utc).date().isoformat()
+    return ts.isoformat()
 
 
 def main() -> int:
@@ -84,8 +95,7 @@ def main() -> int:
             rec["curated_score"] = f"{score:.2f}"
             prefilled += 1
         if lv is not None:
-            rec["last_verified"] = (lv.date().isoformat()
-                                    if hasattr(lv, "date") else lv.isoformat())
+            rec["last_verified"] = render_date(lv)
         rows.append(rec)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)

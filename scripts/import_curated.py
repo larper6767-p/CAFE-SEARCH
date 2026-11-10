@@ -13,10 +13,12 @@ Semantics (owner, 2026-11-10):
     'clear'        -> set NULL
     1.00 - 5.00    -> set (numeric(3,2) domain; more than 2 decimals rounds)
     anything else  -> hard error, no write at all
-  last_verified:
-    blank          -> leave UNCHANGED
-    YYYY-MM-DD     -> set the year-month-day
-    anything else  -> hard error
+    last_verified:
+        blank          -> leave UNCHANGED
+        YYYY-MM-DD     -> set the calendar date (stored as UTC midnight of
+                          that day, so it round-trips as the same date in
+                          any session time zone)
+        anything else  -> hard error
   cafes.notes is NEVER touched by this importer.
 The ids come from the tagging export's universe (cafes.id), so no name fuzz.
 
@@ -33,7 +35,7 @@ from __future__ import annotations
 import argparse
 import csv
 import sys
-from datetime import date
+from datetime import date, datetime, time, timezone
 from pathlib import Path
 
 import psycopg
@@ -111,6 +113,23 @@ def parse_last_verified(raw) -> date | None:
             f"last_verified {raw!r} is not YYYY-MM-DD") from None
 
 
+def stored_instant(d: date) -> datetime:
+    """The stored timestamptz value for an entered calendar date: UTC
+    midnight of that date. Owner invariant (2026-11-10): a date entered as
+    YYYY-MM-DD (Asia/Kolkata semantics) must read back as the SAME calendar
+    date — India is east of UTC, so UTC midnight maps inside the same
+    calendar day in Kolkata, whatever the viewing session's TIME ZONE is."""
+    return datetime.combine(d, time.min, tzinfo=timezone.utc)
+
+
+def render_date(ts) -> str:
+    """Calendar-date render of a stored timestamptz (or date) value, taken
+    in UTC — deterministic across client session TIME ZONE settings."""
+    if hasattr(ts, "date"):  # timestamptz arrives as an aware datetime
+        return ts.astimezone(timezone.utc).date().isoformat()
+    return ts.isoformat()
+
+
 def plan_updates(rows: list[dict], has_lv: bool,
                  city_cafes: dict[int, str]) -> list[tuple]:
     """Returns [(cafe_id, name, new_score, new_lv, line)] for rows that will
@@ -156,10 +175,8 @@ def regen_decisions_file(cur, city_id: int) -> int:
         writer = csv.writer(fh, quoting=csv.QUOTE_ALL)
         writer.writerow(["id", "curated_score", "last_verified"])
         for cafe_id, score, lv in lines:
-            writer.writerow(
-                [cafe_id, f"{score:.2f}",
-                 (lv.date().isoformat() if hasattr(lv, "date")
-                  else lv.isoformat()) if lv is not None else ""])
+            writer.writerow([cafe_id, f"{score:.2f}",
+                             render_date(lv) if lv is not None else ""])
     return len(lines)
 
 
@@ -222,7 +239,7 @@ def main() -> int:
             params.append(None if score == "clear" else score)
         if lv is not None:
             sets.append("last_verified = %s")
-            params.append(lv)
+            params.append(stored_instant(lv))
         if not sets:
             continue
         try:

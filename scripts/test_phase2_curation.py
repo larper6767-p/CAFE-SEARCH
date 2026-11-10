@@ -582,5 +582,71 @@ class TestCuratedDurableRecord(unittest.TestCase):
                 [[str(scored_id), "4.00", "2026-11-10"]])
 
 
+class TestLastVerifiedTzRoundTrip(unittest.TestCase):
+    """Owner ruling 2026-11-10: last_verified is TIMESTAMPTZ; a date entered
+    as YYYY-MM-DD (Asia/Kolkata semantics) must round-trip as the SAME
+    calendar date through the import write, the durable record, and the
+    exporter — including when the viewing session uses a different TIME ZONE."""
+
+    def setUp(self):
+        self.conn = psycopg.connect(get_connection_string())
+
+        def _teardown():
+            try:
+                self.conn.rollback()
+            finally:
+                self.conn.close()
+
+        self.addCleanup(_teardown)
+        self.cur = self.conn.cursor()
+
+    def test_round_trip_same_calendar_date(self):
+        entered = ic.parse_last_verified("2026-11-10")
+        self.assertEqual(entered, date(2026, 11, 10))
+        instant = ic.stored_instant(entered)
+        self.assertEqual(instant.isoformat(),
+                         "2026-11-10T00:00:00+00:00")
+
+        self.cur.execute("select id from public.cities where name = 'Imphal'")
+        city_id = self.cur.fetchone()[0]
+        # WRITE with an Asia/Kolkata session (the owner's zone)
+        self.cur.execute("set time zone 'Asia/Kolkata'")
+        self.cur.execute(
+            """
+            insert into public.cafes (city_id, name, location, status, source,
+                                      google_place_id, curated_score,
+                                      last_verified)
+            values (%s, 'Tz Round Trip Cafe',
+                    st_setsrid(st_makepoint(93.94, 24.807), 4326)
+                    ::extensions.geography,
+                    'operational', 'google', 'TESTTZ_1' || %s, 3.5, %s)
+            returning id
+            """,
+            (city_id, city_id, instant),
+        )
+        cafe_id = self.cur.fetchone()[0]
+        self.cur.execute(
+            "select last_verified from public.cafes where id = %s", (cafe_id,))
+        self.assertEqual(ic.render_date(self.cur.fetchone()[0]),
+                         "2026-11-10")
+        # READ as a DIFFERENT time zone (UTC) — same calendar date
+        self.cur.execute("set time zone 'UTC'")
+        self.cur.execute(
+            "select last_verified from public.cafes where id = %s", (cafe_id,))
+        viewed_utc = self.cur.fetchone()[0]
+        self.assertEqual(ic.render_date(viewed_utc), "2026-11-10")
+        self.assertEqual(cx.render_date(viewed_utc), "2026-11-10")
+        # DURABLE RECORD renders the same calendar date
+        with tempfile.TemporaryDirectory(dir=str(_MANAGED_TEMP)) as tmp:
+            path = os.path.join(tmp, "imphal_curated.csv")
+            with mock.patch.object(ic, "DECISIONS_PATH", Path(path)):
+                self.assertEqual(
+                    ic.regen_decisions_file(self.cur, city_id), 1)
+            with open(path, encoding="utf-8", newline="") as fh:
+                body = list(csv.DictReader(fh))
+            self.assertEqual(
+                [r["last_verified"] for r in body], ["2026-11-10"])
+
+
 if __name__ == "__main__":
     unittest.main()
