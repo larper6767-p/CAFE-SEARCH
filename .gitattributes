@@ -1,0 +1,5 @@
+# Migration files are checksummed byte-exact by scripts/apply_migrations.py
+# (sha256 of raw bytes, verified against migrations.schema_migrations).
+# Keep them LF on disk on every machine so checkout smudging can never
+# change their bytes and trigger a false "changed after it was applied".
+*.sql text eol=lf

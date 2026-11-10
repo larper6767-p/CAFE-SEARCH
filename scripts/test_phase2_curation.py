@@ -15,11 +15,14 @@ import sys
 import tempfile
 import unittest
 from datetime import date
+from pathlib import Path
+from unittest import mock
 
 import psycopg
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import export_curated_sheet as cx  # noqa: E402
 import export_tagging_sheet as ex  # noqa: E402
 import import_curated as ic  # noqa: E402
 import import_tagging as it  # noqa: E402
@@ -28,6 +31,20 @@ from db import get_connection_string  # noqa: E402
 KNOWN_TAGS = ["wifi", "outlets", "outdoor_seating", "quiet", "group_friendly",
               "late_night", "vegetarian_friendly", "pet_friendly",
               "specialty_coffee", "desserts_bakery"]
+
+# This sandbox's system temp root is NOT writable, so tempfile falls back to
+# the cwd (i.e. the repo) — keep every temp artifact under the managed,
+# pre-approved directory instead (see commit 1175d3f for the same class of
+# fix in the config-validation tests).
+# . . . _MANAGED_TEMP anchor (see incident notes 2026-11-10):
+# - the system temp root (C:\Users\bori\AppData\Local\Temp) is NOT writable;
+#   tempfile silently falls back to the CWD, polluting the repo root
+# - creating child DIRECTORIES under the agent-approved temp dir stalls
+#   (mkdtemp hangs) although plain file writes there work
+# => anchor every temp artifact inside data/processed/ (gitignored, on the
+#    2026-12-06 purge list; its parent (= repo) permits mkdtemp)
+_MANAGED_TEMP = Path(__file__).resolve().parents[1] / "data" / "processed"
+_MANAGED_TEMP.mkdir(parents=True, exist_ok=True)
 
 
 def sheet_row(line=2, **over) -> dict:
@@ -175,7 +192,7 @@ class TestExporter(unittest.TestCase):
     def test_export_roundtrip_and_refusal(self):
         """Runs the real exporter against the DEV DB (read-only) into a temp
         dir; re-run must refuse without --overwrite."""
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(dir=str(_MANAGED_TEMP)) as tmp:
             path = os.path.join(tmp, "imphal_tagging.csv")
             old_argv = sys.argv
             sys.argv = ["export_tagging_sheet.py", "--city", "Imphal",
@@ -398,6 +415,237 @@ class TestCuratedDb(unittest.TestCase):
         self.cur.execute(
             "select notes is null from public.cafes where id = %s", (set_me,))
         self.assertEqual(self.cur.fetchone()[0], True)  # notes untouched
+
+
+class TestCuratedHeaders(unittest.TestCase):
+    """Header shapes: exported round-trip + legacy minimal rows."""
+
+    def _write(self, tmp, header, rows):
+        import export_curated_sheet as cx
+        path = os.path.join(tmp, "curated.csv")
+        with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+            w = csv.writer(fh, quoting=csv.QUOTE_ALL)
+            w.writerow(header)
+            w.writerows(rows)
+        return path
+
+    def _read(self, path):
+        try:
+            rows, has_lv = ic.read_curated_csv(path)
+            return "ok", rows, has_lv
+        except ic.CuratedImportError:
+            return "refused", [], None
+
+    def test_exported_roundtrip_header_accepted(self):
+        with tempfile.TemporaryDirectory(dir=str(_MANAGED_TEMP)) as tmp:
+            path = self._write(
+                tmp, ["id", "name", "curated_score", "last_verified"],
+                [["10", "A", "4.5", "2026-11-10"], ["11", "B", "", ""]])
+            status, rows, has_lv = self._read(path)
+        self.assertEqual(status, "ok")
+        self.assertTrue(has_lv)
+        self.assertEqual([r["id"] for r in rows], ["10", "11"])
+
+    def test_exported_without_lv_accepted(self):
+        with tempfile.TemporaryDirectory(dir=str(_MANAGED_TEMP)) as tmp:
+            path = self._write(
+                tmp, ["id", "name", "curated_score"], [["10", "A", "3"]])
+            status, rows, has_lv = self._read(path)
+        self.assertEqual(status, "ok")
+        self.assertFalse(has_lv)
+
+    def test_minimal_legacy_headers_still_accepted(self):
+        for header, vals in ((["id", "curated_score"], [["10", "4"]]),
+                             (["id", "curated_score", "last_verified"],
+                              [["10", "", "2026-11-10"]])):
+            with tempfile.TemporaryDirectory(dir=str(_MANAGED_TEMP)) as tmp:
+                path = self._write(tmp, header, vals)
+                status, _rows, has_lv = self._read(path)
+            with self.subTest(header=header):
+                self.assertEqual(status, "ok")
+                self.assertEqual(has_lv, "last_verified" in header)
+
+    def test_unknown_header_refused(self):
+        with tempfile.TemporaryDirectory(dir=str(_MANAGED_TEMP)) as tmp:
+            path = self._write(tmp, ["id", "score"], [["10", "4"]])
+            status, _rows, _has_lv = self._read(path)
+        self.assertEqual(status, "refused")
+
+
+class TestCuratedExporter(unittest.TestCase):
+    def test_structure_order_and_refusal(self):
+        """Runs the real exporter against the DEV DB (read-only) into a temp
+        dir: header, 233 rows, review_count-desc ordering, prefill tolerance;
+        re-run must refuse without --overwrite."""
+        with tempfile.TemporaryDirectory(dir=str(_MANAGED_TEMP)) as tmp:
+            path = os.path.join(tmp, "imphal_curated.csv")
+            old_argv = sys.argv
+            sys.argv = ["export_curated_sheet.py", "--city", "Imphal",
+                        "--csv", path]
+            try:
+                cx.main()
+            finally:
+                sys.argv = old_argv
+            with open(path, encoding="utf-8-sig", newline="") as fh:
+                reader = csv.DictReader(fh)
+                header = reader.fieldnames
+                rows = list(reader)
+            self.assertEqual(header, cx.HEADER)
+            conn = psycopg.connect(get_connection_string())
+            expected_ids = [
+                r[0] for r in conn.execute(
+                    """
+                    select c.id from public.cafes c
+                    join public.cities ct on ct.id = c.city_id
+                    where ct.name = 'Imphal'
+                    order by c.google_review_count desc nulls last,
+                             c.name asc nulls last, c.id
+                    """
+                ).fetchall()]
+            conn.close()
+            self.assertEqual([int(r["id"]) for r in rows], expected_ids)
+            self.assertEqual(len(rows), 233)  # current DB state
+            for row in rows:
+                for cell, parse in ((row["curated_score"], float),
+                                    (row["last_verified"],
+                                     date.fromisoformat)):
+                    if cell != "":
+                        parse(cell)
+            sys.argv = ["export_curated_sheet.py", "--city", "Imphal",
+                        "--csv", path]
+            try:
+                with self.assertRaises(SystemExit):
+                    cx.main()   # refuses to clobber without --overwrite
+            finally:
+                sys.argv = old_argv
+
+
+class TestCuratedDurableRecord(unittest.TestCase):
+    """regen_decisions_file from UNCOMMITTED state; writes only into a temp
+    path (module constant patched), real data/decisions file untouched."""
+
+    def test_regen_from_uncommitted_state(self):
+        with tempfile.TemporaryDirectory(dir=str(_MANAGED_TEMP)) as tmp:
+            rec_path = os.path.join(tmp, "imphal_curated.csv")
+            conn = psycopg.connect(get_connection_string())
+
+            def _teardown():
+                try:
+                    conn.rollback()
+                finally:
+                    conn.close()
+
+            self.addCleanup(_teardown)
+            cur = conn.cursor()
+            cur.execute("select id from public.cities where name = 'Imphal'")
+            city_id = cur.fetchone()[0]
+            cur.execute(
+                """
+                insert into public.cafes (city_id, name, location, status,
+                                          source, google_place_id,
+                                          curated_score, last_verified)
+                values (%s, 'Recorded Cafe',
+                        st_setsrid(st_makepoint(93.94, 24.807), 4326)
+                        ::extensions.geography,
+                        'operational', 'google', 'TESTREC_1' || %s, 4.0,
+                        date '2026-11-10')
+                returning id
+                """,
+                (city_id, city_id),
+            )
+            scored_id = cur.fetchone()[0]
+            cur.execute(
+                """
+                insert into public.cafes (city_id, name, location, status,
+                                          source, google_place_id)
+                values (%s, 'No Score Cafe',
+                        st_setsrid(st_makepoint(93.94, 24.807), 4326)
+                        ::extensions.geography,
+                        'operational', 'google', 'TESTREC_2' || %s)
+                returning id
+                """,
+                (city_id, city_id),
+            )
+            cur.fetchone()
+            with mock.patch.object(ic, "DECISIONS_PATH",
+                                   Path(rec_path)):
+                count = ic.regen_decisions_file(cur, city_id)
+            self.assertEqual(count, 1)  # only the scored cafe is recorded
+            with open(rec_path, encoding="utf-8", newline="") as fh:
+                reader = csv.DictReader(fh)
+                self.assertEqual(reader.fieldnames,
+                                 ["id", "curated_score", "last_verified"])
+                body = list(reader)
+            self.assertEqual(
+                [[r["id"], r["curated_score"], r["last_verified"]]
+                 for r in body],
+                [[str(scored_id), "4.00", "2026-11-10"]])
+
+
+class TestLastVerifiedTzRoundTrip(unittest.TestCase):
+    """Owner ruling 2026-11-10: last_verified is TIMESTAMPTZ; a date entered
+    as YYYY-MM-DD (Asia/Kolkata semantics) must round-trip as the SAME
+    calendar date through the import write, the durable record, and the
+    exporter — including when the viewing session uses a different TIME ZONE."""
+
+    def setUp(self):
+        self.conn = psycopg.connect(get_connection_string())
+
+        def _teardown():
+            try:
+                self.conn.rollback()
+            finally:
+                self.conn.close()
+
+        self.addCleanup(_teardown)
+        self.cur = self.conn.cursor()
+
+    def test_round_trip_same_calendar_date(self):
+        entered = ic.parse_last_verified("2026-11-10")
+        self.assertEqual(entered, date(2026, 11, 10))
+        instant = ic.stored_instant(entered)
+        self.assertEqual(instant.isoformat(),
+                         "2026-11-10T00:00:00+00:00")
+
+        self.cur.execute("select id from public.cities where name = 'Imphal'")
+        city_id = self.cur.fetchone()[0]
+        # WRITE with an Asia/Kolkata session (the owner's zone)
+        self.cur.execute("set time zone 'Asia/Kolkata'")
+        self.cur.execute(
+            """
+            insert into public.cafes (city_id, name, location, status, source,
+                                      google_place_id, curated_score,
+                                      last_verified)
+            values (%s, 'Tz Round Trip Cafe',
+                    st_setsrid(st_makepoint(93.94, 24.807), 4326)
+                    ::extensions.geography,
+                    'operational', 'google', 'TESTTZ_1' || %s, 3.5, %s)
+            returning id
+            """,
+            (city_id, city_id, instant),
+        )
+        cafe_id = self.cur.fetchone()[0]
+        self.cur.execute(
+            "select last_verified from public.cafes where id = %s", (cafe_id,))
+        self.assertEqual(ic.render_date(self.cur.fetchone()[0]),
+                         "2026-11-10")
+        # READ as a DIFFERENT time zone (UTC) — same calendar date
+        self.cur.execute("set time zone 'UTC'")
+        self.cur.execute(
+            "select last_verified from public.cafes where id = %s", (cafe_id,))
+        viewed_utc = self.cur.fetchone()[0]
+        self.assertEqual(ic.render_date(viewed_utc), "2026-11-10")
+        self.assertEqual(cx.render_date(viewed_utc), "2026-11-10")
+        # DURABLE RECORD renders the same calendar date
+        with tempfile.TemporaryDirectory(dir=str(_MANAGED_TEMP)) as tmp:
+            path = os.path.join(tmp, "imphal_curated.csv")
+            with mock.patch.object(ic, "DECISIONS_PATH", Path(path)):
+                self.assertEqual(
+                    ic.regen_decisions_file(self.cur, city_id), 1)
+            with open(path, encoding="utf-8", newline="") as fh:
+                body = list(csv.DictReader(fh))
+            self.assertEqual(
+                [r["last_verified"] for r in body], ["2026-11-10"])
 
 
 if __name__ == "__main__":
