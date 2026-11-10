@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import unittest
 
 import psycopg
@@ -102,6 +103,16 @@ class TestComputeC(unittest.TestCase):
 
 
 class TestConfig(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+
+    def _write(self, text: str) -> str:
+        fd, path = tempfile.mkstemp(suffix=".toml", dir=self._tmp.name)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("[ranking]\n" + text)
+        return path
+
     def test_shipped_config_valid(self):
         cfg = cfs.load_config(GUT_PATH)
         self.assertEqual(cfg["m"], 15.0)
@@ -122,14 +133,6 @@ class TestConfig(unittest.TestCase):
                            "c_override = 4.27\n")
         cfg = cfs.load_config(path)
         self.assertEqual(cfg["c_override"], 4.27)
-
-    @staticmethod
-    def _write(text: str) -> str:
-        import tempfile
-        fd, path = tempfile.mkstemp(suffix=".toml")
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write("[ranking]\n" + text)
-        return path
 
 
 class TestExplain(unittest.TestCase):
