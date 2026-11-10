@@ -3,7 +3,10 @@
 Dry-run DEFAULT; --commit gated on the owner. One transaction.
 
 CSV format (data/processed/ working file, UTF-8 BOM, all quoted):
-    id, curated_score[, last_verified]
+    id, [name,] curated_score[, last_verified]
+   The 4-column shape (id, name, curated_score, last_verified) is the
+   export_curated_sheet.py round-trip; name is ignored (ids are checked
+   against the city's cafes). The minimal 2/3-column shapes still work.
 Semantics (owner, 2026-11-10):
   curated_score:
     blank          -> leave the stored value UNCHANGED
@@ -19,6 +22,11 @@ The ids come from the tagging export's universe (cafes.id), so no name fuzz.
 
 Note: 'clear' semantics apply to curated_score only (as approved); last_verified
 has no clear token — say the word if you want removal support later.
+
+Durable record: on --commit this importer regenerates data/decisions/
+imphal_curated.csv (id, curated_score, last_verified — tracked in git, one
+row per cafe with a stored curated_score) directly from the resulting
+database state. Dry-run does not write it.
 """
 from __future__ import annotations
 
@@ -34,8 +42,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from db import get_connection_string, masked_host  # noqa: E402
 
-HEADER_PLAIN = ["id", "curated_score"]
-HEADER_LV = ["id", "curated_score", "last_verified"]
+ACCEPTED_HEADERS = [
+    ["id", "name", "curated_score", "last_verified"],
+    ["id", "name", "curated_score"],
+    ["id", "curated_score", "last_verified"],
+    ["id", "curated_score"],
+]
+DECISIONS_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "data" / "decisions" / "imphal_curated.csv"
+)
 
 
 class CuratedImportError(Exception):
@@ -52,15 +68,16 @@ def read_curated_csv(path: str) -> tuple[list[dict], bool]:
     with open(path, encoding="utf-8-sig", newline="") as fh:
         reader = csv.DictReader(fh)
         header = reader.fieldnames or []
-        if header not in (HEADER_PLAIN, HEADER_LV):
+        if header not in ACCEPTED_HEADERS:
             raise CuratedImportError(
-                f"header mismatch.\nexpected: {HEADER_LV}\nfound:    {header}")
+                f"header mismatch.\nexpected one of: {ACCEPTED_HEADERS}"
+                f"\nfound:    {header}")
         rows = list(reader)
     if not rows:
         raise CuratedImportError("no data rows")
     for i, row in enumerate(rows, start=2):
         row["_line"] = i
-    return rows, header == HEADER_LV
+    return rows, header[-1] == "last_verified"
 
 
 def parse_score(raw) -> str | float | None:
@@ -120,6 +137,30 @@ def plan_updates(rows: list[dict], has_lv: bool,
             continue  # both cells blank: nothing to do
         planned.append((cafe_id, city_cafes[cafe_id], score, lv, line))
     return planned
+
+
+def regen_decisions_file(cur, city_id: int) -> int:
+    """Rewrite data/decisions/imphal_curated.csv from the current DB truth:
+    one row per cafe of this city with a stored curated_score."""
+    cur.execute(
+        """
+        select id, curated_score, last_verified
+        from public.cafes
+        where city_id = %s and curated_score is not null
+        order by id
+        """,
+        (city_id,),
+    )
+    lines = cur.fetchall()
+    with open(DECISIONS_PATH, "w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh, quoting=csv.QUOTE_ALL)
+        writer.writerow(["id", "curated_score", "last_verified"])
+        for cafe_id, score, lv in lines:
+            writer.writerow(
+                [cafe_id, f"{score:.2f}",
+                 (lv.date().isoformat() if hasattr(lv, "date")
+                  else lv.isoformat()) if lv is not None else ""])
+    return len(lines)
 
 
 def main() -> int:
@@ -197,10 +238,13 @@ def main() -> int:
                              f"— {exc}") from exc
         updated += cur.rowcount
     conn.commit()
-    print(f"\nCOMMITTED: {updated} row(s) updated "
-          "(curated_score and/or last_verified; notes untouched).")
+    decisions_rows = regen_decisions_file(cur, city_id)
     cur.close()
     conn.close()
+    print(f"\nCOMMITTED: {updated} row(s) updated "
+          "(curated_score and/or last_verified; notes untouched). "
+          f"Durable record regenerated: data/decisions/imphal_curated.csv "
+          f"({decisions_rows} scored cafe(s)).")
     return 0
 
 
