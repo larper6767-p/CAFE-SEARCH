@@ -14,7 +14,9 @@ tag_source: one value per cafe row — own_visit / own_knowledge / review_derive
 that row (unify or split it before importing).
 
 Existing links are PREFILLED so edits round-trip. Refuses to overwrite an
-existing sheet unless --overwrite (protects owner edits on re-export).
+existing sheet unless --overwrite; NOTE: --overwrite DOES discard un-imported
+edits — the import-first/backup-first workflow applies (warned at runtime).
+Re-exporting AFTER an import loses nothing: imported links prefill as 'y'.
 """
 from __future__ import annotations
 
@@ -70,15 +72,20 @@ def main() -> int:
     ap.add_argument("--csv", default="data/processed/imphal_tagging.csv",
                     help="output path (default: data/processed/imphal_tagging.csv)")
     ap.add_argument("--overwrite", action="store_true",
-                    help="replace an existing sheet (default: refuse, the "
-                         "working sheet holds owner edits between exports)")
+                    help="replace an existing sheet — WARNING: discards "
+                         "un-imported edits; import the sheet first (--commit) "
+                         "or back it up before re-exporting")
     args = ap.parse_args()
 
     out_path = Path(args.csv)
-    if out_path.exists() and not args.overwrite:
-        raise SystemExit(
-            f"refused: {out_path} exists — the working sheet is owner-edited. "
-            "Pass --overwrite to replace it deliberately.")
+    if out_path.exists():
+        if not args.overwrite:
+            raise SystemExit(
+                f"refused: {out_path} exists — the working sheet is "
+                "owner-edited. Pass --overwrite to replace it deliberately.")
+        print("WARNING: overwriting this sheet discards UN-IMPORTED edits — "
+              "make sure the previous sheet was imported (--commit) or back "
+              "the file up before continuing.")
 
     print(f"DB host: {masked_host()}")
     conn = connect()  # read-only session
