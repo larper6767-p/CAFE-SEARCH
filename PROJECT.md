@@ -51,8 +51,9 @@ A mobile-first web app that helps people find the best cafes near them, starting
 Tags live in a join table, so adding one later means adding a row, not a column.
 (Vocabulary CONFIRMED by the owner 2026-11-10: keep the current 10 for now.
 These 10 columns are generated from the `tags` table in the tagging sheet; a
-new tag is an INSERT into `tags` followed by a re-export. The ranking rubric
-text is still pending from the owner — no rubric is recorded yet.)
+new tag is an INSERT into `tags` followed by a re-export. The curated-score
+rubric (v1) arrived 2026-11-10 and is recorded as §7.1 — wifi, outlets,
+quiet etc. are deliberately OUT of the curated score by design.)
 
 ## 7. Ranking
 `final_score` is computed in the ingestion job (not at query time) and stored.
@@ -71,6 +72,43 @@ Then blend in (weights `TODO`):
 - Later: user votes
 
 "Best nearby" sort = blend of score and distance, so a far-away 4.8 doesn't beat a close 4.6.
+
+### 7.1 Curated score rubric (v1) — owner-authored, 2026-11-10
+
+**What it is:** the owner's personal 1.0–5.0 rating of a cafe, based on at
+least one visit. Half points allowed (e.g. 3.5). NULL = haven't visited.
+A cafe is NEVER scored from photos, hearsay, or Google reviews.
+
+| Score | Meaning |
+|---|---|
+| 5.0 | Best in Imphal. Go out of the way; bring visitors. |
+| 4.0–4.5 | Very good. Recommend to a friend without hesitation. |
+| 3.0–3.5 | Solid. Fine if nearby, nothing special. |
+| 2.0–2.5 | Below average. Only if there's no alternative. |
+| 1.0–1.5 | Would not return. |
+
+Rough internal weighing (a guide, not a formula): drinks & food 50% (quality
+of what was actually ordered); space & comfort 30% (seating, cleanliness,
+noise, atmosphere); service & consistency 10% (speed, friendliness, same
+quality on repeat visits); value 10% (worth what was paid).
+
+Deliberately NOT part of the score: wifi, outlets, quiet, outdoor seating,
+pet-friendliness etc. are TAGS (a cafe with no wifi can still be a 5); price
+level is handled by the price filter (only the "value" judgment counts);
+distance, popularity and Google rating are handled elsewhere.
+
+Consistency rules:
+1. Visit at least once; order a signature drink; stay 20+ minutes when possible.
+2. Record the visit date as `last_verified` when scoring.
+3. Calibrate: most cafes should land between 3.0 and 4.0; if more than ~10%
+   of scores are 5.0, the scale is being inflated.
+4. Score the first 5 cafes, then re-read them side by side before continuing.
+5. Re-score after 12 months, or sooner if owners/menu/quality change.
+6. Keep sub-scores in a private spreadsheet — ONLY the overall number goes in
+   the database.
+
+This matches `import_curated.py` as built: blank = unchanged/NULL,
+optional `last_verified` stored only when provided, `cafes.notes` untouched.
 
 ## 8. Data sources
 | Source | Use | Status |
@@ -142,7 +180,7 @@ Data sources → Ingestion jobs → Postgres + PostGIS → Backend API → Web a
 | 7 | Users + community | Accounts, reviews, favorites |
 | 8 | Growth | More cities, second sources, monetization |
 
-**Current phase:** 2 — **ranking + tagging.** Step 1 done (read-only stats). Steps 3–5 plan **approved with owner changes** (2026-11-10); coded in the owner's order, nothing committed to the DB: (a) **scoring job** `scripts/compute_final_score.py` + tracked `config/scoring.toml` (m=15.0, w=0.6 google / 0.4 curated, C computed excluding `closed_temporarily` per config flag, override mode supported; `--explain "<name>"` read-only) — dry-run on the 233 Google rows shown to the owner: C=4.251 (180 rated, closed excluded), branches google-only 187 / null 46 / blended 0 / curated-only 0 / stub 0, top-20 (4.74 Chai cafe King …) and bottom-20 (3.09 Ciao Bella …) printed, **no --commit**; (b) **migration** `supabase/migrations/20261110000000_add_cafe_tags_tag_source.sql` (provenance ladder own_visit/own_knowledge/review_derived/user, nullable, delete rule restricted to own_*) — **APPLIED 2026-11-10 on owner authorization after the additive-only re-check (nullable column + CHECK + comment, no defaults/data changes; 16 tracked)**; tagging DB tests activated (suite 140 OK, 1 justified skip: the refusal-path test is moot while the column exists); (c) **tagging exporter** `scripts/export_tagging_sheet.py` (working sheet → gitignored `data/processed/imphal_tagging.csv`, pre-filled round-trip, refuses clobber without --overwrite; **--overwrite DISCARDS un-imported sheet edits — workflow: import first, back up the sheet, then re-export; warned at runtime + --help**) + **tagging importer** `scripts/import_tagging.py` (blank=unknown, never "no"; deletes ONLY own_visit/own_knowledge links, every deletion listed; on --commit regenerates the tracked stripped record `data/decisions/imphal_tags.csv`) + **curated importer** `scripts/import_curated.py` (blank=unchanged, `clear`→NULL, optional `last_verified`; never touches `cafes.notes`). Suite **140 OK (1 justified skip** — the missing-column refusal test, moot while the migration is applied). **Real tagging sheet GENERATED 2026-11-10 (export only, no import): 233 rows × 14 columns, 0 prefilled links.** **No real import run yet** — owner's filled sheet pending. Owner to deliver: rubric text (the paste arrived as an unfilled placeholder); tag vocabulary CONFIRMED (§6: keep the current 10). Deadlines: refresh fetch 2026-12-01, purges 2026-12-06. Phase 1 only leftover: owner's manual CSV import (separate).
+**Current phase:** 2 — **ranking + tagging.** Step 1 done (read-only stats). Steps 3–5 plan **approved with owner changes** (2026-11-10); coded in the owner's order, nothing committed to the DB: (a) **scoring job** `scripts/compute_final_score.py` + tracked `config/scoring.toml` (m=15.0, w=0.6 google / 0.4 curated, C computed excluding `closed_temporarily` per config flag, override mode supported; `--explain "<name>"` read-only) — dry-run on the 233 Google rows shown to the owner: C=4.251 (180 rated, closed excluded), branches google-only 187 / null 46 / blended 0 / curated-only 0 / stub 0, top-20 (4.74 Chai cafe King …) and bottom-20 (3.09 Ciao Bella …) printed, **no --commit**; (b) **migration** `supabase/migrations/20261110000000_add_cafe_tags_tag_source.sql` (provenance ladder own_visit/own_knowledge/review_derived/user, nullable, delete rule restricted to own_*) — **APPLIED 2026-11-10 on owner authorization after the additive-only re-check (nullable column + CHECK + comment, no defaults/data changes; 16 tracked)**; tagging DB tests activated (suite 140 OK, 1 justified skip: the refusal-path test is moot while the column exists); (c) **tagging exporter** `scripts/export_tagging_sheet.py` (working sheet → gitignored `data/processed/imphal_tagging.csv`, pre-filled round-trip, refuses clobber without --overwrite; **--overwrite DISCARDS un-imported sheet edits — workflow: import first, back up the sheet, then re-export; warned at runtime + --help**) + **tagging importer** `scripts/import_tagging.py` (blank=unknown, never "no"; deletes ONLY own_visit/own_knowledge links, every deletion listed; on --commit regenerates the tracked stripped record `data/decisions/imphal_tags.csv`) + **curated importer** `scripts/import_curated.py` (blank=unchanged, `clear`→NULL, optional `last_verified`; never touches `cafes.notes`). Suite **140 OK (1 justified skip** — the missing-column refusal test, moot while the migration is applied). **Real tagging sheet GENERATED 2026-11-10 (export only, no import): 233 rows × 14 columns, 0 prefilled links.** **No real import run yet** — owner's filled sheet pending. Owner to deliver: nothing — curated-score rubric RECEIVED and folded (§7.1, 2026-11-10); tag vocabulary CONFIRMED (§6: keep the current 10). Deadlines: refresh fetch 2026-12-01, purges 2026-12-06. Phase 1 only leftover: owner's manual CSV import (separate).
 
 **Phase 1 closing checklist (2026-11-09):**
 - **Done:** schema live (15 migrations incl. `last_verified` relax, location-purge CHECK, name/status/final_score purge revision, notes + instagram_url); step-4 raw fetch (402 unique places, 78 Google calls ≈ ₹0.00); step-5 review decisions (include 233 / review 2 / exclude 167, tracked durably in `data/decisions/`); **step-6 real load** (233 Google rows, §15.5 verification green); **step-7 importer + template** (code committed, dry-run default, suite 106 OK); purge tooling ready (local `purge_expired_cache.py` + DB `purge_stale_google_data.py`, both dry-run default, `--commit` gated); standing rules recorded (stub-filter §9/§10; manual coords from phone GPS/OSM only).
@@ -160,6 +198,7 @@ Data sources → Ingestion jobs → Postgres + PostGIS → Backend API → Web a
 | Date | Decision | Reason |
 |---|---|---|
 | | Start with Imphal only | Focused launch, data quality |
+| 2026-11-10 | **Curated-score rubric v1 RECEIVED and folded (§7.1)** — 1.0–5.0, visit-based only (≥1 visit, signature drink ordered, 20+ min), half points allowed, NULL = not visited, never from photos/hearsay/Google; rough internal weighing 50% drinks & food / 30% space & comfort / 10% service & consistency / 10% value; tags (wifi etc.), price level, distance/popularity/Google deliberately excluded; calibration rules recorded (most cafes 3.0–4.0, ≤~10% fives, first-5 side-by-side anchor, re-score after 12 months or on owner/menu/quality change, sub-scores in a PRIVATE sheet — only the overall number enters the DB). Semantics match `import_curated.py` as built (blank = unchanged/NULL; `last_verified` optional; notes untouched) — NO code change needed. **Supabase GitHub-integration check failure on main@4152635 investigated READ-ONLY**: root cause = two migration ledgers on the same DB (ours = schema `migrations`; integration = `supabase_migrations.schema_migrations`); the integration's ledger had files 1–15 but NOT `20261110000000` → it re-ran that file → its UNGUARDED `add constraint cafe_tags_tag_source_check` collided with the constraint OUR runner applied 2026-11-10 (duplicate_object). Verified: the constraint is defined exactly once in the repo and once on the live DB (`pg_constraint` count 1); the failing statement is a re-execution, NOT a double definition; live data untouched (cafés 233, cafe_tags 0, postgis on). Files 1–15 are fully guarded (IF NOT EXISTS / drop-if-exists / upserts); 20261110000000's ADD CONSTRAINT is the repo's ONLY unguarded statement of those classes. Options + risks presented in chat; NOTHING edited, applied, or disabled — owner direction pending | Owner rubric paste + investigation items 1–4 |
 | 2026-11-10 | **Push + migration-folder incident (recovered, verified).** PUSH executed on the owner's explicit instruction: `9729938..383e22f` (6 commits, all migrations included) — origin now in sync; remote URL updated to the canonical `github.com/larper6767-p/CAFE-SEARCH.git` after GitHub's own move notice (the redirect worked beforehand too). ANOMALY during the push turn: the whole `supabase/migrations/` folder (16 files) had been MOVED to `scripts/supabase/migrations/` outside the session (not by the agent). The agent's first restore attempt BACKFIRED — `Move-Item` failed (the destination folder no longer existed) and a chained `Remove-Item` deleted the moved copies (own mistake, disclosed immediately). Full recovery then: all 16 files restored byte-exact from git HEAD; checkout had materialized them CRLF (`core.autocrlf=true`), which broke the sha256-raw-bytes checksum guard on all 16 — fixed by rewriting the files with exact HEAD-blob LF bytes, then repo-local `core.autocrlf=input` + `git add --renormalize .` (content unchanged; the phantom Modified list cleared). NEW tracked `.gitattributes` pins `*.sql text eol=lf` so checkout smudging can never break the checksum guard again. RUNNER PROOF after repair: `tracked: 16 | pending: 0 | staged: 0`, zero checksum errors. CAVEAT: any UNCOMMITTED owner edits to the moved (later deleted) copies would be unrecoverable — the restored truth is HEAD content, which is what the DB checksums verify | Push on owner instruction; incident + recovery fully disclosed |
 | 2026-11-10 | **Step-2 partial: tag vocabulary CONFIRMED** — keep the current 10 v1 tags for now (annotated in §6; a new tag = INSERT into `tags` + re-export). Ranking rubric text still PENDING: the owner's paste arrived as an unfilled placeholder, so no rubric was recorded and none was invented. **Exporter warning added**: --overwrite prints (and --help states) that it DISCARDS un-imported sheet edits — workflow: import first, back up the sheet, then re-export. **Real tagging sheet GENERATED (export only, no import)**: `data/processed/imphal_tagging.csv` — 233 cafes × 14 columns (id, name, review_count, tag_source + the 10 tags), sorted review_count desc, 0 prefilled links (cafe_tags empty; tag_source column live), UTF-8-BOM all-quoted. Still zero writes beyond approved migrations; no scoring --commit; no imports | Owner items 1–4; rubric awaited |
 | 2026-11-10 | **cafe_tags.tag_source migration APPLIED** after owner authorization + additive-only re-check (nullable text column, CHECK 4-token provenance, column comment; no defaults/data changes/drops; the only pending file; **16 tracked**) + the ranking print now shows `R=` (google_rating) beside `v=` on top/bottom-20 output (owner asked for both). Conditional tagging DB test activated and passing (add/delete/protected-link flow on the live schema; refusal-path test now a justified skip while the column exists). Suite 140 OK. Confirmed for the owner: tag sheet columns are GENERATED from the tags table (new tag = INSERT + re-export), prefill = DB links with refuse-without---overwrite; disclosed caveat: prefill reads DB state, so `--overwrite` of a sheet with un-imported edits WOULD drop those edits (merge-on-overwrite upgrade offered, not built) | Owner instruction items 1–4; still no --commit/import/real-export ran |
