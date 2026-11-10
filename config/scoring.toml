@@ -1,0 +1,28 @@
+# Phase 2 scoring configuration (PROJECT.md section 7).
+# Read by scripts/compute_final_score.py with stdlib tomllib — no new dependency.
+# Tracked so that weight changes are owner-reviewable. DRY-RUN is the only
+# default; real writes need --commit.
+
+[ranking]
+# m = Bayesian threshold: at v = m reviews, a cafe's own rating and the prior
+# weigh 50/50. Suggested 15 from the 2026-11-10 stats (median review_count 13);
+# owner confirms/adjusts here — no code change needed.
+m = 15.0
+
+# w = weight of the Google-credit term (WR); curated_score gets (1 - w).
+# w = 0.6 google / 0.4 curated (owner, 2026-11-10).
+w = 0.6
+
+# C = Bayesian prior. "computed" = mean google_rating across the city's rated
+# rows at run time; "override" = c_override below.
+c_mode = "computed"
+c_override = 4.271
+
+# Exclude status = 'closed_temporarily' rows from the computed C
+# (owner decision, 2026-11-10).
+exclude_closed_temporarily_from_c = true
+
+# A prepended header to print C/m/w and per-branch counts.
+[output]
+top_n = 20
+bottom_n = 20
