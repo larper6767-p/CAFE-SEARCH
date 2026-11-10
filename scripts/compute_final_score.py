@@ -152,6 +152,10 @@ def explain_lines(row: dict, c: float, m: float, w: float) -> list[str]:
     return lines
 
 
+def fmt_rating(v) -> str:
+    return "n/a" if v is None else f"{v:.2f}".rstrip("0").rstrip(".")
+
+
 def _print_ranking(rows: list[dict], results: list[tuple[float | None, str]],
                    cfg: dict) -> None:
     scored = [dict(row, final=f, branch=b)
@@ -161,11 +165,13 @@ def _print_ranking(rows: list[dict], results: list[tuple[float | None, str]],
     print(f"\nTOP {cfg['top_n']} by final_score:")
     for r in scored[:cfg["top_n"]]:
         print(f"  {r['final']:5.2f}  {str(r['name'])[:40]:40} "
-              f"[{r['branch']:12}] v={r.get('google_review_count') or 0}")
+              f"[{r['branch']:12}] R={fmt_rating(r.get('google_rating'))} "
+              f"v={r.get('google_review_count') or 0}")
     print(f"\nBOTTOM {cfg['bottom_n']} by final_score:")
     for r in list(reversed(scored))[:cfg["bottom_n"]]:
         print(f"  {r['final']:5.2f}  {str(r['name'])[:40]:40} "
-              f"[{r['branch']:12}] v={r.get('google_review_count') or 0}")
+              f"[{r['branch']:12}] R={fmt_rating(r.get('google_rating'))} "
+              f"v={r.get('google_review_count') or 0}")
     if not scored:
         print("  (no scored rows)")
 
