@@ -60,5 +60,6 @@ Then update `PROJECT.md` (current phase, decisions log) if anything changed.
 - Invent data, fields, or API behavior
 - Commit secrets or `.env` files
 - Run destructive database commands without approval
+- **Move, rename, or delete any file or folder without first listing exactly what will change and asking the owner** — including repos, tracked files, and the agent's own temp/test residue (list + confirm before every touch)
 - Add dependencies silently
 - Mark something done without verifying it
